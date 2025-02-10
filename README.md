@@ -1,62 +1,70 @@
 # PDF Comparison Tools
 
-This repository contains scripts for comparing text content between PDF files, with an additional capability to detect and compare text colors.
+This repository contains a script for comparing text content between PDF files.
 
-## Scripts
+## Script
 
-1. `compare-pdfs.sh` - Basic PDF text comparison
-2. `compare-pdfs-color.sh` - Enhanced version that includes text color information
+`compare-pdfs.sh` - Compares text content between PDF files
 
 ## Prerequisites
 
-### Required Command-line Tools
+### Required Tools
+- `pdftotext` (from poppler-utils package)
+- `bash` (version 4 or higher)
+- Standard Unix tools:
+  - `grep` - For pattern matching
+  - `sed` - For text processing
+  - `awk` - For text processing
+  - `sort` - For sorting chunks
+  - `uniq` - For removing duplicates
+  - `tr` - For character translation/deletion
 
-- `pdftotext` (part of poppler-utils) - For extracting text from PDFs
-- `grep` - For pattern matching
-- `sed` - For text processing
-- `awk` - For text processing
-- `tr` - For character translation/deletion
-
-### Additional Tools for Color Detection (`compare-pdfs-color.sh`)
-
-- `pdfinfo` (part of poppler-utils) - For extracting PDF metadata
-- `pdftoppm` (part of poppler-utils) - For converting PDF pages to images
-- `convert` (part of ImageMagick) - For image processing and color extraction
-
-### Installation
-
-#### Ubuntu/Debian
+### Installation on Ubuntu/Debian
 ```bash
-# Install basic requirements
-sudo apt-get update
 sudo apt-get install poppler-utils
-
-# For color detection script
-sudo apt-get install imagemagick
-```
-
-#### macOS
-```bash
-# Using Homebrew
-brew install poppler
-brew install imagemagick
 ```
 
 ## Usage
 
-### Basic Text Comparison
+### Command Line
 ```bash
-./compare-pdfs.sh file1.pdf file2.pdf
+./compare-pdfs.sh <pdf1> <pdf2>
 ```
-- Output will be saved to `vergleich_output.txt`
-- Compares text content between PDFs
-- Identifies matching phrases with context
+
+### Example
+```bash
+./compare-pdfs.sh document1.pdf document2.pdf
+```
+
+### Output
+- Results are saved to `vergleich_output.txt`
+- Each match is formatted as:
+  ```
+  === Übereinstimmung N ===
+  Gefundener Übereinstimmender Text:
+  >>> [matching text]
+
+  Kontext in Datei 1:
+  [previous lines]
+  [matching line]
+  [following lines]
+
+  Kontext in Datei 2:
+  [previous lines]
+  [matching line]
+  [following lines]
+  ```
+
+### Features
+- Identifies matching text passages between two PDF documents
+- Shows context around each match (lines before and after)
+- Handles German characters and special formatting
+- Ignores duplicate matches to reduce redundancy
+- Uses 5-word chunks for comparison to balance accuracy and performance
 
 ## Notes
 
 - The scripts are designed to work with UTF-8 encoded PDFs
-- Color detection may vary depending on PDF formatting and structure
-- Large PDFs may require more processing time, especially with color detection
 - Temporary files are automatically cleaned up unless running in debug mode
 
 ## Powered By
