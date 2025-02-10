@@ -12,7 +12,8 @@ export LC_ALL=de_DE.UTF-8
 
 PDF1="$1"
 PDF2="$2"
-MIN_WORDS=3
+MIN_WORDS=7
+context_sentences=3
 OUTPUT_FILE="vergleich_output.txt"
 DEBUG_FILE="debug_output.txt"
 
@@ -43,168 +44,228 @@ for cmd in pdftotext grep sed awk; do
 done
 
 # Extract text from PDFs with UTF-8 encoding
+echo "Extrahiere Text aus PDF Dateien..."
 pdftotext -layout -enc UTF-8 "$PDF1" "$TEMP1"
 pdftotext -layout -enc UTF-8 "$PDF2" "$TEMP2"
 
-# Function to normalize text while preserving important phrases
-normalize_text() {
+# Function to convert text into sentences
+extract_sentences() {
     local text="$1"
     echo "$text" |
-        # Replace various types of dashes and hyphens with a standard one
-        sed 's/[–—―]/\-/g' |
-        # Normalize spaces around dashes
-        sed 's/ \- /\-/g' |
-        # Remove line numbers and page markers
-        sed -E 's/^[0-9]+\.//' |
-        sed -E 's/^Page-[0-9]+$//' |
-        # Remove bullet points and list markers
-        sed -E 's/^[[:space:]]*[-•·\*○●♦][[:space:]]*//' |
-        sed -E 's/^[[:space:]]*[0-9]+[\.\)][[:space:]]*//' |
-        sed -E 's/^[[:space:]]*[a-zäöüA-ZÄÖÜ][\.\)][[:space:]]*//' |
-        # Normalize spaces
-        tr -s '[:space:]' ' ' |
-        # Trim whitespace
-        sed 's/^[[:space:]]*//;s/[[:space:]]*$//'
+        # Replace newlines with spaces, preserving paragraph breaks
+        tr '\n' ' ' |
+        # Normalize multiple spaces
+        tr -s ' ' |
+        # Add proper spacing around bullet points
+        sed 's/•/\n•/g' |
+        # Add newline after each sentence end, but not after abbreviations
+        sed 's/\([.!?]\) \([[:upper:]]\)/\1\n\2/g' |
+        # Join lines that don't end with sentence-ending punctuation
+        awk 'BEGIN{RS="\n";ORS="\n"} {if(NR>1 && $0!~/^[•]/ && prev!~/[.!?]$/) printf "%s ",prev; else if(NR>1) print prev; prev=$0} END{print prev}'
 }
 
-# Process each file line by line
-process_file() {
-    local infile="$1"
-    local outfile="$2"
-    local debugfile="$3"
-    local buffer=""
-    local line_count=0
-    local total_lines=$(wc -l < "$infile")
+# Function to get chunks of N words from a sentence
+get_chunks() {
+    local text="$1"
+    local chunk_size=5
+    local words=($text)
+    local num_words=${#words[@]}
+    local chunks=()
     
-    > "$debugfile"  # Clear debug file
-    
-    while IFS= read -r line || [ -n "$line" ]; do
-        ((line_count++))
-        echo -ne "Verarbeite Zeile $line_count von $total_lines\r"
-        
-        # Skip empty lines
-        [ -z "${line// }" ] && continue
-        
-        # Normalize the line
-        local normalized_line=$(normalize_text "$line")
-        [ -z "$normalized_line" ] && continue
-        
-        # Add to buffer if line doesn't end with sentence-ending punctuation
-        if [[ ! "$normalized_line" =~ [.!?]$ && -n "$normalized_line" ]]; then
-            if [ -n "$buffer" ]; then
-                buffer="$buffer $normalized_line"
-            else
-                buffer="$normalized_line"
-            fi
-            continue
-        elif [ -n "$buffer" ]; then
-            normalized_line="$buffer $normalized_line"
-            buffer=""
-        fi
-        
-        # Count words
-        local word_count=$(echo "$normalized_line" | wc -w)
-        
-        # Store lines that meet minimum word count
-        if [ "$word_count" -ge "$MIN_WORDS" ]; then
-            echo "$normalized_line" >> "$outfile"
-            # Store debug info
-            echo "Line $line_count: $normalized_line" >> "$debugfile"
-        fi
-    done < "$infile"
-    
-    # Handle any remaining buffer content
-    if [ -n "$buffer" ]; then
-        local word_count=$(echo "$buffer" | wc -w)
-        if [ "$word_count" -ge "$MIN_WORDS" ]; then
-            echo "$buffer" >> "$outfile"
-            echo "Buffer: $buffer" >> "$debugfile"
-        fi
-    fi
-    
-    # Sort and remove duplicates while preserving German characters
-    LC_ALL=de_DE.UTF-8 sort -u -o "$outfile" "$outfile"
+    for ((i=0; i<=num_words-chunk_size; i++)); do
+        local chunk=""
+        for ((j=0; j<chunk_size; j++)); do
+            chunk+="${words[$((i+j))]} "
+        done
+        chunks+=("${chunk% }")
+    done
+    printf "%s\n" "${chunks[@]}"
 }
 
-# Process both files
-echo "Processing $PDF1..."
-process_file "$TEMP1" "$NORMALIZED1" "$DEBUG1"
-echo "Processing $PDF2..."
-process_file "$TEMP2" "$NORMALIZED2" "$DEBUG2"
-
-# Clear output file
-> "$OUTPUT_FILE"
-
-echo "Vergleiche PDFs und extrahiere Kontext..."
-
-# Function to normalize for comparison
+# Function to normalize text for comparison
 normalize_for_comparison() {
-    echo "$1" |
+    local text="$1"
+    echo "$text" |
+        # First remove any invalid or replacement characters
+        tr -d '\000-\011\013-\037\177\200-\377' |
         # Convert to lowercase
         tr '[:upper:]' '[:lower:]' |
-        # Replace umlauts with base characters
-        sed 's/ä/a/g; s/ö/o/g; s/ü/u/g; s/ß/ss/g' |
-        # Remove line numbers and references
-        sed -E 's/^[0-9]+[\.:]//g' |
-        # Remove party tags and annotations
-        sed -E 's/\([^)]*\)//g' |
-        sed -E 's/(ovp|spoe|neos|fpoe)://g' |
-        sed -E 's/-[[:space:]]*[[:alpha:]]+[[:space:]]*dagegen//g' |
-        # Remove bullet points and formatting
-        sed -E 's/^[[:space:]]*[o−▪•·\*○●♦]([[:space:]]|$)//g' |
-        # Normalize spaces and punctuation
-        tr -s '[:space:]' ' ' |
-        # Remove remaining punctuation except periods
-        sed 's/[,;:]/ /g' |
-        # Trim
-        sed 's/^[[:space:]]*//;s/[[:space:]]*$//'
+        # Replace various types of dashes and hyphens with a standard one
+        sed 's/[–—―­]/-/g' |
+        # Remove soft hyphens and other special characters
+        tr -d '­​‌‍' |
+        # Remove bullet points at start
+        sed 's/^[\*•‣◦⁃∙]\s*//' |
+        # Normalize spaces
+        tr -s ' ' |
+        # Remove punctuation except periods for abbreviations
+        sed 's/[,;:"""()]//g' |
+        # Remove line numbers and page markers
+        sed -E 's/^[0-9]+\.//' |
+        # Trim whitespace
+        sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//'
 }
 
-# Function to find matching phrases
+# Function to find matching phrases with context
 find_matches() {
     local file1="$1"
     local file2="$2"
     local output="$3"
-    local min_words=3
+    local matches_found=0
+    declare -A seen_matches
     
+    # Initialize debug file
+    echo "Debug-Informationen für Vergleich" > "$DEBUG_FILE"
+    echo "--------------------------------" >> "$DEBUG_FILE"
+    echo "" >> "$DEBUG_FILE"
+    
+    # Read and pre-filter sentences
+    echo "Vorverarbeitung der Sätze..."
+    
+    declare -A normalized_map1
+    declare -A normalized_map2
+    declare -A sentence_map1
+    declare -A sentence_map2
+    declare -A position_map1
+    declare -A position_map2
+    declare -a all_sentences1
+    declare -a all_sentences2
+    
+    echo "Verarbeite '$(basename "$PDF1")'..."
+    local pos=0
+    while IFS= read -r sentence; do
+        [ -z "${sentence// }" ] && continue
+        
+        all_sentences1+=("$sentence")
+        
+        # Log original sentence
+        echo "Original: $sentence" >> "$DEBUG_FILE"
+        
+        # Normalize sentence
+        local normalized=$(normalize_for_comparison "$sentence")
+        
+        # Get chunks of 5 words
+        while IFS= read -r chunk; do
+            [ -z "$chunk" ] && continue
+            echo "Chunk: $chunk" >> "$DEBUG_FILE"
+            normalized_map1["$chunk"]="$sentence"
+            sentence_map1["$sentence"]="$chunk"
+            position_map1["$sentence"]=$pos
+        done < <(get_chunks "$normalized")
+        
+        echo "---" >> "$DEBUG_FILE"
+        ((pos++))
+    done < <(extract_sentences "$(cat "$file1")")
+    
+    echo "Verarbeite '$(basename "$PDF2")'..."
+    pos=0
+    while IFS= read -r sentence; do
+        [ -z "${sentence// }" ] && continue
+        
+        all_sentences2+=("$sentence")
+        
+        # Log original sentence
+        echo "Original: $sentence" >> "$DEBUG_FILE"
+        
+        # Normalize sentence
+        local normalized=$(normalize_for_comparison "$sentence")
+        
+        # Get chunks of 5 words
+        while IFS= read -r chunk; do
+            [ -z "$chunk" ] && continue
+            echo "Chunk: $chunk" >> "$DEBUG_FILE"
+            normalized_map2["$chunk"]="$sentence"
+            sentence_map2["$sentence"]="$chunk"
+            position_map2["$sentence"]=$pos
+        done < <(get_chunks "$normalized")
+        
+        echo "---" >> "$DEBUG_FILE"
+        ((pos++))
+    done < <(extract_sentences "$(cat "$file2")")
+    
+    local total1=${#normalized_map1[@]}
+    local total2=${#normalized_map2[@]}
+    echo "Vergleiche $total1 relevante Sätze aus '$(basename "$PDF1")' mit $total2 relevanten Sätzen aus '$(basename "$PDF2")'..."
+    
+    # Clear output file
     > "$output"
     
-    while IFS= read -r line1; do
-        # Skip empty lines
-        [ -z "${line1// }" ] && continue
+    # Instead of comparing every sentence with every other sentence,
+    # we can just look up normalized sentences in our hash tables
+    for chunk in "${!normalized_map1[@]}"; do
+        # Skip if we've seen this normalized text before
+        [ -n "${seen_matches[$chunk]+x}" ] && continue
         
-        # Normalize the line
-        local norm_line1=$(normalize_for_comparison "$line1")
-        [ -z "$norm_line1" ] && continue
-        
-        while IFS= read -r line2; do
-            [ -z "${line2// }" ] && continue
-            local norm_line2=$(normalize_for_comparison "$line2")
-            [ -z "$norm_line2" ] && continue
+        # Check if this normalized text exists in file 2
+        if [ -n "${normalized_map2[$chunk]+x}" ]; then
+            ((matches_found++))
+            seen_matches["$chunk"]=1
             
-            # Find common phrases
-            if [ ${#norm_line1} -gt 20 ] && [ ${#norm_line2} -gt 20 ]; then
-                # Split into words and compare
-                for phrase in $(echo "$norm_line1" | tr ' ' '\n'); do
-                    if echo "$norm_line2" | grep -q -F "$phrase"; then
-                        local context=$(echo "$norm_line2" | grep -o -E ".{0,30}$phrase.{0,30}")
-                        if [ "$(echo "$context" | wc -w)" -ge "$min_words" ]; then
-                            echo "Match found:" >> "$output"
-                            echo "File 1: $line1" >> "$output"
-                            echo "File 2: $line2" >> "$output"
-                            echo "Matching context: $context" >> "$output"
-                            echo "---" >> "$output"
-                        fi
+            sentence1="${normalized_map1[$chunk]}"
+            sentence2="${normalized_map2[$chunk]}"
+            i=${position_map1["$sentence1"]}
+            j=${position_map2["$sentence2"]}
+            
+            # Print match header
+            {
+                echo "=== Übereinstimmung $matches_found ==="
+                echo ""
+                
+                # Print context from first file
+                echo "Kontext aus '$(basename "$PDF1")':"
+                echo "-------------------"
+                # Context before match
+                for ((k=i-context_sentences; k<i; k++)); do
+                    if [ $k -ge 0 ]; then
+                        echo "    ${all_sentences1[$k]}"
                     fi
                 done
-            fi
-        done < "$file2"
-    done < "$file1"
+                # Matching sentence
+                echo ">>> $sentence1"
+                # Context after match
+                for ((k=i+1; k<=i+context_sentences; k++)); do
+                    if [ $k -lt ${#all_sentences1[@]} ]; then
+                        echo "    ${all_sentences1[$k]}"
+                    fi
+                done
+                
+                echo ""
+                echo "Kontext aus '$(basename "$PDF2")':"
+                echo "-------------------"
+                # Context before match
+                for ((k=j-context_sentences; k<j; k++)); do
+                    if [ $k -ge 0 ]; then
+                        echo "    ${all_sentences2[$k]}"
+                    fi
+                done
+                # Matching sentence
+                echo ">>> $sentence2"
+                # Context after match
+                for ((k=j+1; k<=j+context_sentences; k++)); do
+                    if [ $k -lt ${#all_sentences2[@]} ]; then
+                        echo "    ${all_sentences2[$k]}"
+                    fi
+                done
+                echo ""
+                echo ""
+            } >> "$output"
+        fi
+    done
+    
+    echo -e "\nVergleich abgeschlossen."
+    
+    if [ "$matches_found" -eq 0 ]; then
+        echo "Keine Übereinstimmungen gefunden."
+        echo "Keine Übereinstimmungen gefunden." >> "$output"
+    else
+        echo "$matches_found einzigartige Übereinstimmungen gefunden."
+        echo "$matches_found einzigartige Übereinstimmungen gefunden." >> "$output"
+    fi
 }
 
-# Compare files
+# Process files and find matches
 echo "Suche nach Übereinstimmungen..."
-find_matches "$NORMALIZED1" "$NORMALIZED2" "$OUTPUT_FILE"
+find_matches "$TEMP1" "$TEMP2" "$OUTPUT_FILE"
 
 echo "Ergebnis wurde in $OUTPUT_FILE gespeichert."
 echo "Debug-Informationen wurden in $DEBUG_FILE gespeichert."
