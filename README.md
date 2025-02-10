@@ -19,10 +19,55 @@ This repository contains a script for comparing text content between PDF files.
   - `uniq` - For removing duplicates
   - `tr` - For character translation/deletion
 
-### Installation on Ubuntu/Debian
+## Platform Compatibility
+
+### Linux
+- Native support
+- All required tools are readily available through package managers
+
+### macOS
+- Supported through Homebrew
+- Requires installation of GNU tools
+
+### Windows
+- Can be run using Windows Subsystem for Linux (WSL)
+- Alternatively, can use Git Bash or Cygwin with required packages
+
+## Installation
+
+### Ubuntu/Debian Linux
 ```bash
 sudo apt-get install poppler-utils
 ```
+
+### macOS (using Homebrew)
+```bash
+# Install required tools
+brew install poppler
+brew install coreutils  # For GNU tools
+
+# Optional: Add GNU tools to PATH
+echo 'export PATH="/usr/local/opt/coreutils/libexec/gnubin:$PATH"' >> ~/.zshrc
+source ~/.zshrc
+```
+
+### Windows
+1. Install WSL (Windows Subsystem for Linux):
+   - Open PowerShell as Administrator and run:
+     ```powershell
+     wsl --install
+     ```
+   - After installation, restart your computer
+   - Open Ubuntu on WSL and run:
+     ```bash
+     sudo apt-get update
+     sudo apt-get install poppler-utils
+     ```
+
+2. Alternative: Using Git Bash or Cygwin
+   - Install Git Bash or Cygwin
+   - Install required packages through the package manager
+   - Ensure `pdftotext` and GNU tools are available
 
 ## Usage
 
@@ -64,8 +109,11 @@ sudo apt-get install poppler-utils
 
 ## Notes
 
-- The scripts are designed to work with UTF-8 encoded PDFs
+- The script is designed to work with UTF-8 encoded PDFs
 - Temporary files are automatically cleaned up unless running in debug mode
+- On Windows, use forward slashes (/) in file paths when using WSL
+- On macOS, ensure GNU versions of tools are being used (installed via Homebrew)
+- Performance may vary depending on PDF size and system resources
 
 ## Powered By
 
