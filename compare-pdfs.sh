@@ -75,9 +75,10 @@ get_chunks() {
         for ((j=0; j<chunk_size; j++)); do
             chunk+="${words[$((i+j))]} "
         done
-        chunks+=("${chunk% }")
+        chunk="${chunk% }"
+        # Store both original and normalized chunks
+        echo "$chunk|$(normalize_for_comparison "$chunk")"
     done
-    printf "%s\n" "${chunks[@]}"
 }
 
 # Function to normalize text for comparison
@@ -126,6 +127,8 @@ find_matches() {
     declare -A sentence_map2
     declare -A position_map1
     declare -A position_map2
+    declare -A original_chunks1
+    declare -A original_chunks2
     declare -a all_sentences1
     declare -a all_sentences2
     
@@ -142,14 +145,16 @@ find_matches() {
         # Normalize sentence
         local normalized=$(normalize_for_comparison "$sentence")
         
-        # Get chunks of 5 words
-        while IFS= read -r chunk; do
-            [ -z "$chunk" ] && continue
-            echo "Chunk: $chunk" >> "$DEBUG_FILE"
-            normalized_map1["$chunk"]="$sentence"
-            sentence_map1["$sentence"]="$chunk"
+        # Get chunks with their normalized versions
+        while IFS='|' read -r original_chunk normalized_chunk; do
+            [ -z "$normalized_chunk" ] && continue
+            echo "Original Chunk: $original_chunk" >> "$DEBUG_FILE"
+            echo "Normalized Chunk: $normalized_chunk" >> "$DEBUG_FILE"
+            normalized_map1["$normalized_chunk"]="$sentence"
+            sentence_map1["$sentence"]="$normalized_chunk"
+            original_chunks1["$normalized_chunk"]="$original_chunk"
             position_map1["$sentence"]=$pos
-        done < <(get_chunks "$normalized")
+        done < <(get_chunks "$sentence")
         
         echo "---" >> "$DEBUG_FILE"
         ((pos++))
@@ -168,14 +173,16 @@ find_matches() {
         # Normalize sentence
         local normalized=$(normalize_for_comparison "$sentence")
         
-        # Get chunks of 5 words
-        while IFS= read -r chunk; do
-            [ -z "$chunk" ] && continue
-            echo "Chunk: $chunk" >> "$DEBUG_FILE"
-            normalized_map2["$chunk"]="$sentence"
-            sentence_map2["$sentence"]="$chunk"
+        # Get chunks with their normalized versions
+        while IFS='|' read -r original_chunk normalized_chunk; do
+            [ -z "$normalized_chunk" ] && continue
+            echo "Original Chunk: $original_chunk" >> "$DEBUG_FILE"
+            echo "Normalized Chunk: $normalized_chunk" >> "$DEBUG_FILE"
+            normalized_map2["$normalized_chunk"]="$sentence"
+            sentence_map2["$sentence"]="$normalized_chunk"
+            original_chunks2["$normalized_chunk"]="$original_chunk"
             position_map2["$sentence"]=$pos
-        done < <(get_chunks "$normalized")
+        done < <(get_chunks "$sentence")
         
         echo "---" >> "$DEBUG_FILE"
         ((pos++))
@@ -213,14 +220,7 @@ find_matches() {
             {
                 echo "=== Übereinstimmung $matches_found ==="
                 echo "Gefundener Übereinstimmender Text:"
-                # Find the original text that matches the normalized chunk in sentence1
-                local original_chunk
-                if [[ "$sentence1" =~ .*($chunk).* ]]; then
-                    original_chunk="${BASH_REMATCH[1]}"
-                else
-                    original_chunk="$chunk"
-                fi
-                echo ">>> $original_chunk"
+                echo ">>> ${original_chunks1[$chunk]}"
                 echo ""
                 
                 # Print context from first file
