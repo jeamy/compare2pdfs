@@ -64,7 +64,7 @@ extract_sentences() {
 # Function to get chunks of N words from a sentence
 get_chunks() {
     local text="$1"
-    local chunk_size=6
+    local chunk_size=5
     local -a words
     read -ra words <<< "$text"
     local num_words=${#words[@]}
@@ -117,9 +117,11 @@ find_matches() {
     local output="$3"
     local matches_found=0
     declare -A seen_matches
+    declare -A matched_sentences
     
+    # Declare an associative array to track matched sentences
+    declare -A matched_sentences
 
-    
     # Read and pre-filter sentences
     echo "Vorverarbeitung der Sätze..."
     
@@ -193,9 +195,9 @@ find_matches() {
             local norm_chunk2=$(normalize_for_comparison "$orig_chunk2")
             
             if [[ "$norm_chunk1" != "$norm_chunk2" ]]; then
-                echo "Chunks don't match after normalization:" >&2
-                echo "Norm 1: $norm_chunk1" >&2
-                echo "Norm 2: $norm_chunk2" >&2
+                #echo "Chunks don't match after normalization:" >&2
+                #echo "Norm 1: $norm_chunk1" >&2
+                #echo "Norm 2: $norm_chunk2" >&2
                 continue
             fi
             
@@ -224,8 +226,17 @@ find_matches() {
                 continue
             fi
             
+            # Skip if we've already matched these sentences
+            if [[ -n "${matched_sentences[$matching_sentence1]+x}" || -n "${matched_sentences[$matching_sentence2]+x}" ]]; then
+                continue
+            fi
+            
             # Increment match counter for valid matches
             ((matches_found++))
+            
+            # Mark the sentences as matched
+            matched_sentences[$matching_sentence1]=1
+            matched_sentences[$matching_sentence2]=1
             
             # Print match header
             {
