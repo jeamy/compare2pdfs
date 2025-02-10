@@ -13,7 +13,7 @@ export LC_ALL=de_DE.UTF-8
 PDF1="$1"
 PDF2="$2"
 MIN_WORDS=7
-context_sentences=3
+context_sentences=2
 OUTPUT_FILE="vergleich_output.txt"
 DEBUG_FILE="debug_output.txt"
 
@@ -203,6 +203,12 @@ find_matches() {
             
             sentence1="${normalized_map1[$chunk]}"
             sentence2="${normalized_map2[$chunk]}"
+            
+            # Skip if we've already seen this sentence pair
+            local sentence_pair="$(normalize_for_comparison "$sentence1")|||$(normalize_for_comparison "$sentence2")"
+            [ -n "${seen_matches[$sentence_pair]+x}" ] && continue
+            seen_matches["$sentence_pair"]=1
+            
             i=${position_map1["$sentence1"]}
             j=${position_map2["$sentence2"]}
             
@@ -211,41 +217,40 @@ find_matches() {
                 echo "=== Übereinstimmung $matches_found ==="
                 echo ""
                 
+                # Get the matching chunk for display
+                local matching_chunk="$chunk"
+                
                 # Print context from first file
                 echo "Kontext aus '$(basename "$PDF1")':"
                 echo "-------------------"
-                # Context before match
-                for ((k=i-context_sentences; k<i; k++)); do
-                    if [ $k -ge 0 ]; then
-                        echo "    ${all_sentences1[$k]}"
-                    fi
-                done
+                echo "Übereinstimmender Text: $matching_chunk"
+                echo "-------------------"
+                # One line before match
+                if [ $((i-1)) -ge 0 ]; then
+                    echo "    ${all_sentences1[$((i-1))]}"
+                fi
                 # Matching sentence
                 echo ">>> $sentence1"
-                # Context after match
-                for ((k=i+1; k<=i+context_sentences; k++)); do
-                    if [ $k -lt ${#all_sentences1[@]} ]; then
-                        echo "    ${all_sentences1[$k]}"
-                    fi
-                done
+                # One line after match
+                if [ $((i+1)) -lt ${#all_sentences1[@]} ]; then
+                    echo "    ${all_sentences1[$((i+1))]}"
+                fi
                 
                 echo ""
                 echo "Kontext aus '$(basename "$PDF2")':"
                 echo "-------------------"
-                # Context before match
-                for ((k=j-context_sentences; k<j; k++)); do
-                    if [ $k -ge 0 ]; then
-                        echo "    ${all_sentences2[$k]}"
-                    fi
-                done
+                echo "Übereinstimmender Text: $matching_chunk"
+                echo "-------------------"
+                # One line before match
+                if [ $((j-1)) -ge 0 ]; then
+                    echo "    ${all_sentences2[$((j-1))]}"
+                fi
                 # Matching sentence
                 echo ">>> $sentence2"
-                # Context after match
-                for ((k=j+1; k<=j+context_sentences; k++)); do
-                    if [ $k -lt ${#all_sentences2[@]} ]; then
-                        echo "    ${all_sentences2[$k]}"
-                    fi
-                done
+                # One line after match
+                if [ $((j+1)) -lt ${#all_sentences2[@]} ]; then
+                    echo "    ${all_sentences2[$((j+1))]}"
+                fi
                 echo ""
                 echo ""
             } >> "$output"
