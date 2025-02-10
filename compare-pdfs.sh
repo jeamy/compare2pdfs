@@ -209,14 +209,21 @@ find_matches() {
             
             i=${position_map1["$sentence1"]}
             j=${position_map2["$sentence2"]}
-                        # Print match header and chunk
+                        # Print match header
             {
                 echo "=== Übereinstimmung $matches_found ==="
-                echo ""
                 echo "Gefundener Übereinstimmender Text:"
-                echo ">>> $chunk"
+                # Find the original text that matches the normalized chunk in sentence1
+                local original_chunk
+                if [[ "$sentence1" =~ .*($chunk).* ]]; then
+                    original_chunk="${BASH_REMATCH[1]}"
+                else
+                    original_chunk="$chunk"
+                fi
+                echo ">>> $original_chunk"
                 echo ""
                 
+                # Print context from first file
                 echo "Kontext aus '$(basename "$PDF1")':"
                 echo "-------------------"
                 # Two lines before match
@@ -225,7 +232,7 @@ find_matches() {
                         echo "    ${all_sentences1[$k]}"
                     fi
                 done
-                # Show full sentence
+                # Show complete line with the matching chunk
                 echo ">>> $sentence1"
                 # Two lines after match
                 for ((k=i+1; k<=i+2; k++)); do
@@ -243,7 +250,7 @@ find_matches() {
                         echo "    ${all_sentences2[$k]}"
                     fi
                 done
-                # Show full sentence
+                # Show complete line with the matching chunk
                 echo ">>> $sentence2"
                 # Two lines after match
                 for ((k=j+1; k<=j+2; k++)); do
