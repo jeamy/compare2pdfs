@@ -67,75 +67,76 @@ def cleanup_temp_files(temp_files: List[str]):
                 pass
 
 def get_text_colors(pdf_path: str, text: str) -> Tuple[Optional[str], Optional[str]]:
-    """Get foreground and background colors for text in PDF."""
+    """Get foreground and background colors for text in PDF.
+    Returns a tuple of (text_color, background_color) where each color is the name
+    of the color found in the exact location of the matched text.
+    """
     try:
         doc = fitz.open(pdf_path)
-        text_color = bg_color = None
         
-        # Split search text into smaller chunks for better matching
-        words = text.split()
-        search_chunks = [' '.join(words[i:i+3]) for i in range(0, len(words), 3)]
+        # Normalize the search text
+        normalized_text = normalize_for_comparison(text)
         
-        # Search in all pages since we don't know which page the text is on
         for page in doc:
-            # First get all the drawings that might be backgrounds
-            drawings = page.get_drawings()
-            colored_rects = []
-            
-            # Look for any colored rectangles
-            for drawing in drawings:
-                if 'items' in drawing and drawing.get('fill') and drawing.get('fill') != (1,1,1):  # Any non-white fill
-                    for item in drawing['items']:
-                        if item[0] == 're':  # Rectangle
-                            rect = fitz.Rect(item[1])
-                            colored_rects.append((rect, drawing['fill']))
-            
-            # Now search for text and check its properties
-            for chunk in search_chunks:
-                # Get text instances with their properties
-                text_instances = page.search_for(chunk)
-                if not text_instances:
-                    continue
-                    
-                blocks = page.get_text("dict")["blocks"]
+            # Get text instances with their properties
+            text_instances = page.search_for(text, quads=True)  # Use quads for more precise location
+            if not text_instances:
+                continue
                 
-                # For each instance of the text
-                for rect in text_instances:
-                    # Find text color by matching location with blocks
-                    for block in blocks:
+            # Get all page elements
+            blocks = page.get_text("dict", flags=fitz.TEXT_PRESERVE_SPANS)["blocks"]
+            drawings = page.get_drawings()
+            
+            # Process background rectangles
+            colored_rects = []
+            for drawing in drawings:
+                if 'items' in drawing and drawing.get('fill'):
+                    fill_color = drawing.get('fill')
+                    if fill_color != (1,1,1):  # Skip pure white backgrounds
+                        for item in drawing['items']:
+                            if item[0] == 're':  # Rectangle
+                                rect = fitz.Rect(item[1])
+                                colored_rects.append((rect, fill_color))
+            
+            # For each instance of the exact text match
+            for inst in text_instances:
+                match_rect = inst.rect  # Get precise rectangle of match
+                text_color = None
+                bg_color = None
+                
+                # Find the exact span containing our text
+                for block in blocks:
+                    if not text_color:  # Continue until we find the text color
                         for line in block.get("lines", []):
                             for span in line.get("spans", []):
                                 span_rect = fitz.Rect(span["bbox"])
-                                if rect.intersects(span_rect):
-                                    if chunk.lower() in span["text"].lower():
+                                # Check if this span contains our match
+                                if match_rect.intersects(span_rect):
+                                    span_text = normalize_for_comparison(span["text"])
+                                    if normalized_text in span_text:
                                         if "color" in span:
                                             color_val = span["color"]
                                             rgb_percent = int_to_rgb_percent(color_val)
-                                            color_name = rgb_to_color_name(rgb_percent)
-                                            if color_name != 'Schwarz':
-                                                text_color = color_name
-                    
-                    # Find background color
-                    for bg_rect, color in colored_rects:
-                        if rect.intersects(bg_rect):
-                            rgb_percent = int_to_rgb_percent(color)
-                            color_name = rgb_to_color_name(rgb_percent)
-                            if color_name != 'Schwarz':
-                                bg_color = color_name
-
-                            break
-                    
-                    if text_color or bg_color:  # If we found any colors, stop searching
-                        break
+                                            text_color = rgb_to_color_name(rgb_percent)
                 
-                if text_color or bg_color:  # If we found any colors, stop searching chunks
-                    break
-            
-            if text_color or bg_color:  # If we found any colors, stop searching pages
-                break
+                # Find the most specific background color
+                smallest_area = float('inf')
+                for bg_rect, color in colored_rects:
+                    if match_rect.intersects(bg_rect):
+                        # Calculate intersection area to find most specific background
+                        intersection = match_rect.intersect(bg_rect)
+                        area = intersection.get_area()
+                        if area < smallest_area:
+                            smallest_area = area
+                            rgb_percent = int_to_rgb_percent(color)
+                            bg_color = rgb_to_color_name(rgb_percent)
+                
+                if text_color or bg_color:
+                    doc.close()
+                    return text_color, bg_color
                 
         doc.close()
-        return text_color, bg_color
+        return None, None
     except Exception as e:
         print(f"Warning: Color detection failed: {e}")
         return None, None

@@ -1,7 +1,17 @@
-# PDF generation and manipulation
-fpdf2>=2.7.5
-pdfminer.six>=20231228
-PyMuPDF>=1.23.7
+# Core PDF processing
+PyMuPDF>=1.23.7  # Required for PDF text extraction and color analysis
 
-# Text processing
-locale>=1.0
+# System utilities
+python-magic>=0.4.27  # For file type detection
+chardet>=5.2.0  # For character encoding detection
+
+# Note: The following are built-in Python modules (no installation needed):
+# - sys
+# - os
+# - tempfile
+# - subprocess
+# - locale
+# - re
+# - atexit
+# - typing
+# - math
