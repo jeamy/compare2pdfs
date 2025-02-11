@@ -1722,7 +1722,6 @@ Kontext aus 'protokoll-oevp-spoe-neos.pdf':
 === Übereinstimmung 83 ===
 Gefundener Übereinstimmender Text:
 >>> auf 80 km/h erhöhen kann.
-Farbe in Datei 1: schwarz, Hintergrund: standard
 
 Kontext aus 'protokoll-fpoe-oevp.pdf':
 -------------------
@@ -4008,7 +4007,6 @@ Kontext aus 'protokoll-oevp-spoe-neos.pdf':
 === Übereinstimmung 192 ===
 Gefundener Übereinstimmender Text:
 >>> für alle Kinder und Jugendlichen
-Farbe in Datei 1: schwarz, Hintergrund: standard
 
 Kontext aus 'protokoll-fpoe-oevp.pdf':
 -------------------
@@ -4114,7 +4112,6 @@ Kontext aus 'protokoll-oevp-spoe-neos.pdf':
 === Übereinstimmung 197 ===
 Gefundener Übereinstimmender Text:
 >>> gemeinsam mit Ländern und Gemeinden,
-Farbe in Datei 2: schwarz, Hintergrund: standard
 
 Kontext aus 'protokoll-fpoe-oevp.pdf':
 -------------------
@@ -4703,7 +4700,6 @@ Kontext aus 'protokoll-oevp-spoe-neos.pdf':
 === Übereinstimmung 225 ===
 Gefundener Übereinstimmender Text:
 >>> Vereinbarkeit von Familie und Beruf
-Farbe in Datei 1: schwarz, Hintergrund: standard
 
 Kontext aus 'protokoll-fpoe-oevp.pdf':
 -------------------

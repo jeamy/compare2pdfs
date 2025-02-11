@@ -9,7 +9,13 @@ import re
 from typing import List, Dict, Set, Tuple, Optional
 import atexit
 from pdfminer.high_level import extract_pages
-from pdfminer.layout import LTTextBox, LTChar
+from pdfminer.layout import LAParams, LTTextBox, LTChar, LTPage
+from pdfminer.pdfinterp import PDFResourceManager
+from pdfminer.pdfpage import PDFPage
+from pdfminer.pdfinterp import PDFPageInterpreter
+from pdfminer.converter import PDFPageAggregator
+from pdfminer.pdfdocument import PDFDocument
+from pdfminer.pdfparser import PDFParser
 
 def check_dependencies():
     """Check if required command line tools are available."""
@@ -87,100 +93,182 @@ def get_color_name(rgb: Tuple[float, float, float]) -> str:
 
 def get_color_from_colorspace(color_space) -> Optional[Tuple[float, float, float]]:
     """Extract RGB values from a PDFColorSpace object."""
+    if color_space is None:
+        return None
+
+    # Try direct RGB values first
     if hasattr(color_space, 'rgb'):
         return color_space.rgb
-    elif hasattr(color_space, 'color'):
-        # Some color spaces store color in the 'color' attribute
-        if len(color_space.color) == 3:  # RGB color
-            return tuple(color_space.color)
-        elif len(color_space.color) == 1:  # Grayscale
-            gray = color_space.color[0]
-            return (gray, gray, gray)
-    elif hasattr(color_space, 'ncomponents') and color_space.ncomponents == 1:
-        # Handle DeviceGray colorspace
-        if hasattr(color_space, 'color') and color_space.color:
-            gray = color_space.color[0]
+    elif hasattr(color_space, 'rgbvalue'):
+        return color_space.rgbvalue
+
+    # Try color attribute
+    if hasattr(color_space, 'color'):
+        color = color_space.color
+        if isinstance(color, (tuple, list)):
+            if len(color) == 3:  # RGB color
+                return tuple(color)
+            elif len(color) == 1:  # Grayscale
+                gray = color[0]
+                return (gray, gray, gray)
+            elif len(color) == 4:  # CMYK
+                c, m, y, k = color
+                r = 1 - min(1, c * (1 - k) + k)
+                g = 1 - min(1, m * (1 - k) + k)
+                b = 1 - min(1, y * (1 - k) + k)
+                return (r, g, b)
+
+    # Handle different color spaces
+    color_space_str = str(color_space)
+    
+    if 'DeviceGray' in color_space_str:
+        gray = None
+        if hasattr(color_space, 'gray'):
+            gray = color_space.gray
         elif hasattr(color_space, 'value'):
             gray = color_space.value
-        else:
-            gray = 0
-        return (gray, gray, gray)
-    elif hasattr(color_space, '_color'):
-        # Some PDFs store color in _color
-        if isinstance(color_space._color, tuple) and len(color_space._color) == 3:
-            return color_space._color
+        elif hasattr(color_space, 'color') and color_space.color:
+            gray = color_space.color[0] if isinstance(color_space.color, (tuple, list)) else color_space.color
+        
+        if gray is not None:
+            return (float(gray), float(gray), float(gray))
+    
+    elif 'DeviceCMYK' in color_space_str:
+        cmyk = None
+        if hasattr(color_space, 'cmyk'):
+            cmyk = color_space.cmyk
+        elif hasattr(color_space, 'value') and len(color_space.value) == 4:
+            cmyk = color_space.value
+            
+        if cmyk:
+            c, m, y, k = cmyk
+            r = 1 - min(1, c * (1 - k) + k)
+            g = 1 - min(1, m * (1 - k) + k)
+            b = 1 - min(1, y * (1 - k) + k)
+            return (r, g, b)
+    
+    # Try _color as last resort
+    if hasattr(color_space, '_color'):
+        color = color_space._color
+        if isinstance(color, (tuple, list)):
+            if len(color) == 3:  # RGB
+                return tuple(color)
+            elif len(color) == 1:  # Grayscale
+                gray = color[0]
+                return (gray, gray, gray)
+            elif len(color) == 4:  # CMYK
+                c, m, y, k = color
+                r = 1 - min(1, c * (1 - k) + k)
+                g = 1 - min(1, m * (1 - k) + k)
+                b = 1 - min(1, y * (1 - k) + k)
+                return (r, g, b)
+    
     return None
 
 def extract_text_with_colors(pdf_path: str) -> Dict[str, Tuple[Optional[str], Optional[str]]]:
     """Extract text and its colors from PDF."""
     text_colors = {}
     debug = os.environ.get('DEBUG') == '1'
+    
     if debug:
         print(f"\nExtracting colors from {pdf_path}...")
-    for page in extract_pages(pdf_path):
-        for element in page:
-            if isinstance(element, LTTextBox):
-                for text_line in element:
-                    text = ''
-                    fg_color = None
-                    bg_color = None
-                    for char in text_line:
-                        if isinstance(char, LTChar):
-                            text += char.get_text()
-                            # Try to get foreground color from various attributes
-                            if debug and text.strip():
-                                print(f"\nAnalyzing text: {text.strip()}")
-                                if hasattr(char, 'ncs'):
-                                    print(f"NCS: {char.ncs}")
-                                if hasattr(char, 'graphicstate'):
-                                    gs = char.graphicstate
-                                    print(f"GraphicState attrs: {[attr for attr in dir(gs) if not attr.startswith('_')]}")
-                            
-                            # Try to get foreground color
-                            if hasattr(char, 'ncs') and char.ncs:
-                                rgb = get_color_from_colorspace(char.ncs)
+    
+    # Set up PDF parsing with custom parameters
+    rsrcmgr = PDFResourceManager()
+    laparams = LAParams(
+        all_texts=True,  # Get all text, including those in figures
+        detect_vertical=True,  # Better handle vertical text
+        word_margin=0.1,  # Adjust word grouping
+        char_margin=2.0,  # Adjust character grouping
+        line_margin=0.5,  # Adjust line grouping
+        boxes_flow=0.5,  # Adjust text box grouping
+    )
+    
+    device = PDFPageAggregator(rsrcmgr, laparams=laparams)
+    interpreter = PDFPageInterpreter(rsrcmgr, device)
+    
+    with open(pdf_path, 'rb') as file:
+        parser = PDFParser(file)
+        doc = PDFDocument(parser)
+        for page in PDFPage.create_pages(doc):
+            interpreter.process_page(page)
+            layout = device.get_result()
+            for element in layout:
+                if isinstance(element, LTTextBox):
+                    for text_line in element:
+                        text = ''
+                        fg_color = None
+                        bg_color = None
+                        
+                        # First try to get colors from the text line itself
+                        if hasattr(text_line, 'graphicstate'):
+                            gs = text_line.graphicstate
+                            if hasattr(gs, 'ncolor'):
+                                rgb = get_color_from_colorspace(gs.ncolor)
                                 if rgb:
                                     fg_color = get_color_name(rgb)
+                            if hasattr(gs, 'fillcolor'):
+                                rgb = get_color_from_colorspace(gs.fillcolor)
+                                if rgb:
+                                    bg_color = get_color_name(rgb)
+                        
+                        for char in text_line:
+                            if isinstance(char, LTChar):
+                                text += char.get_text()
+                                # Try to get foreground color from various attributes
+                                if debug and text.strip():
+                                    print(f"\nAnalyzing text: {text.strip()}")
+                                    if hasattr(char, 'ncs'):
+                                        print(f"NCS: {char.ncs}")
+                                    if hasattr(char, 'graphicstate'):
+                                        gs = char.graphicstate
+                                        print(f"GraphicState attrs: {[attr for attr in dir(gs) if not attr.startswith('_')]}")
                             
-                            if hasattr(char, 'graphicstate'):
-                                gs = char.graphicstate
+                                # Try to get foreground color
+                                if hasattr(char, 'ncs') and char.ncs:
+                                    rgb = get_color_from_colorspace(char.ncs)
+                                    if rgb:
+                                        fg_color = get_color_name(rgb)
                                 
-                                # Try to get foreground color from graphicstate if not already found
-                                if not fg_color:
-                                    # Try ncolor/scolor first (these seem most reliable)
-                                    if hasattr(gs, 'ncolor') and gs.ncolor:
-                                        rgb = get_color_from_colorspace(gs.ncolor)
+                                if hasattr(char, 'graphicstate'):
+                                    gs = char.graphicstate
+                                    
+                                    # Try to get foreground color from graphicstate if not already found
+                                    if not fg_color:
+                                        # Try ncolor/scolor first (these seem most reliable)
+                                        if hasattr(gs, 'ncolor') and gs.ncolor:
+                                            rgb = get_color_from_colorspace(gs.ncolor)
+                                            if rgb:
+                                                fg_color = get_color_name(rgb)
+                                        elif hasattr(gs, 'scolor') and gs.scolor:
+                                            rgb = get_color_from_colorspace(gs.scolor)
+                                            if rgb:
+                                                fg_color = get_color_name(rgb)
+                                        # Then try other color attributes
+                                        elif hasattr(gs, 'strokecolor') and gs.strokecolor:
+                                            rgb = get_color_from_colorspace(gs.strokecolor)
+                                            if rgb:
+                                                fg_color = get_color_name(rgb)
+                                        elif hasattr(gs, 'stroking_color') and gs.stroking_color:
+                                            rgb = get_color_from_colorspace(gs.stroking_color)
+                                            if rgb:
+                                                fg_color = get_color_name(rgb)
+                                    
+                                    # Try to get background color
+                                    if hasattr(gs, 'fillcolor') and gs.fillcolor:
+                                        rgb = get_color_from_colorspace(gs.fillcolor)
                                         if rgb:
-                                            fg_color = get_color_name(rgb)
-                                    elif hasattr(gs, 'scolor') and gs.scolor:
-                                        rgb = get_color_from_colorspace(gs.scolor)
+                                            bg_color = get_color_name(rgb)
+                                    elif hasattr(gs, 'color') and gs.color:
+                                        rgb = get_color_from_colorspace(gs.color)
                                         if rgb:
-                                            fg_color = get_color_name(rgb)
-                                    # Then try other color attributes
-                                    elif hasattr(gs, 'strokecolor') and gs.strokecolor:
-                                        rgb = get_color_from_colorspace(gs.strokecolor)
+                                            bg_color = get_color_name(rgb)
+                                    elif hasattr(gs, 'non_stroking_color') and gs.non_stroking_color:
+                                        rgb = get_color_from_colorspace(gs.non_stroking_color)
                                         if rgb:
-                                            fg_color = get_color_name(rgb)
-                                    elif hasattr(gs, 'stroking_color') and gs.stroking_color:
-                                        rgb = get_color_from_colorspace(gs.stroking_color)
-                                        if rgb:
-                                            fg_color = get_color_name(rgb)
-                                
-                                # Try to get background color
-                                if hasattr(gs, 'fillcolor') and gs.fillcolor:
-                                    rgb = get_color_from_colorspace(gs.fillcolor)
-                                    if rgb:
-                                        bg_color = get_color_name(rgb)
-                                elif hasattr(gs, 'color') and gs.color:
-                                    rgb = get_color_from_colorspace(gs.color)
-                                    if rgb:
-                                        bg_color = get_color_name(rgb)
-                                elif hasattr(gs, 'non_stroking_color') and gs.non_stroking_color:
-                                    rgb = get_color_from_colorspace(gs.non_stroking_color)
-                                    if rgb:
-                                        bg_color = get_color_name(rgb)
-                    if text.strip():
-                        text_colors[text.strip()] = (fg_color, bg_color)
+                                            bg_color = get_color_name(rgb)
+                        if text.strip():
+                            text_colors[text.strip()] = (fg_color, bg_color)
     return text_colors
 
 def extract_text_from_pdf(pdf_path: str, output_path: str):

@@ -324,3 +324,4 @@ pip install -r requirements.txt
 
 - [Windsurf](https://www.codeium.com/windsurf) - The world's first agentic IDE
 - Claude 3.5 Sonnet - Anthropic's advanced AI model
+- LLM babysitting by a human in a virtual environment
