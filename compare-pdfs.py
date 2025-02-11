@@ -8,6 +8,7 @@ import locale
 import re
 from typing import List, Dict, Set, Tuple, Optional
 import atexit
+import fitz  # PyMuPDF
 from pdfminer.high_level import extract_pages
 from pdfminer.layout import LAParams, LTTextBox, LTChar, LTPage
 from pdfminer.pdfinterp import PDFResourceManager
@@ -44,52 +45,67 @@ def rgb2hex(rgb: Tuple[float, float, float]) -> str:
     )
 
 def get_color_name(rgb: Tuple[float, float, float]) -> str:
-    """Convert RGB values to color names."""
+    """Convert RGB values to color names with improved detection."""
     r, g, b = rgb
-    # Convert to 0-255 range for easier comparison
     r255 = int(r * 255)
     g255 = int(g * 255)
     b255 = int(b * 255)
+    
+    # Calculate color intensity and saturation
+    max_val = max(r255, g255, b255)
+    min_val = min(r255, g255, b255)
+    intensity = max_val / 255.0
+    saturation = 0 if max_val == 0 else (max_val - min_val) / max_val
 
     # Define color thresholds
     def is_close(a: int, b: int, threshold: int = 30) -> bool:
         return abs(a - b) <= threshold
 
-    # For grayscale colors
-    if is_close(r255, g255, 5) and is_close(g255, b255, 5):
-        if r255 < 30:
+    # Check for grayscale first
+    if saturation < 0.15:
+        if intensity < 0.12:
             return 'schwarz'
-        elif r255 > 225:
+        elif intensity > 0.88:
             return 'weiß'
-        elif r255 > 150:
-            return 'hellgrau'
-        elif r255 > 75:
-            return 'grau'
-        else:
+        elif intensity < 0.4:
             return 'dunkelgrau'
+        elif intensity > 0.6:
+            return 'hellgrau'
+        else:
+            return 'grau'
 
-    # Basic colors with tolerance
-    if r255 > 200 and g255 < 50 and b255 < 50:
-        return 'rot'
-    elif r255 < 50 and g255 > 200 and b255 < 50:
-        return 'grün'
-    elif r255 < 50 and g255 < 50 and b255 > 200:
-        return 'blau'
-    elif r255 > 200 and g255 > 200 and b255 < 50:
-        return 'gelb'
-    elif r255 > 200 and g255 < 50 and b255 > 200:
-        return 'magenta'
-    elif r255 < 50 and g255 > 200 and b255 > 200:
-        return 'cyan'
-    elif r255 > 200 and g255 > 100 and b255 < 50:
-        return 'orange'
-    elif r255 > 150 and g255 < 100 and b255 < 100:
-        return 'dunkelrot'
-    elif r255 < 100 and g255 > 150 and b255 < 100:
-        return 'dunkelgrün'
-    else:
-        hex_color = rgb2hex((r, g, b))
-        return f'RGB({hex_color})'
+    # Pure colors with high saturation
+    if saturation > 0.7:
+        if r255 > 200 and g255 < 100 and b255 < 100:
+            return 'rot'
+        elif r255 < 100 and g255 > 200 and b255 < 100:
+            return 'grün'
+        elif r255 < 100 and g255 < 100 and b255 > 200:
+            return 'blau'
+        elif r255 > 200 and g255 > 200 and b255 < 100:
+            return 'gelb'
+        elif r255 > 200 and g255 < 100 and b255 > 200:
+            return 'magenta'
+        elif r255 < 100 and g255 > 200 and b255 > 200:
+            return 'cyan'
+
+    # Mixed colors and variations
+    if r255 > g255 and r255 > b255:
+        if g255 > (r255 * 0.6):
+            return 'orange' if g255 > (r255 * 0.4) else 'dunkelorange'
+        return 'dunkelrot' if intensity < 0.6 else 'hellrot'
+    elif g255 > r255 and g255 > b255:
+        if r255 > (g255 * 0.6):
+            return 'gelbgrün'
+        return 'dunkelgrün' if intensity < 0.6 else 'hellgrün'
+    elif b255 > r255 and b255 > g255:
+        if r255 > (b255 * 0.6):
+            return 'violett'
+        return 'dunkelblau' if intensity < 0.6 else 'hellblau'
+
+    # Fallback to RGB hex
+    hex_color = rgb2hex((r, g, b))
+    return f'RGB({hex_color})'
 
 def get_color_from_colorspace(color_space) -> Optional[Tuple[float, float, float]]:
     """Extract RGB values from a PDFColorSpace object."""
@@ -166,22 +182,83 @@ def get_color_from_colorspace(color_space) -> Optional[Tuple[float, float, float
     return None
 
 def extract_text_with_colors(pdf_path: str) -> Dict[str, Tuple[Optional[str], Optional[str]]]:
-    """Extract text and its colors from PDF."""
+    """Extract text and its colors from PDF using both PDFMiner and PyMuPDF."""
     text_colors = {}
     debug = os.environ.get('DEBUG') == '1'
     
     if debug:
         print(f"\nExtracting colors from {pdf_path}...")
     
-    # Set up PDF parsing with custom parameters
+    # First try with PyMuPDF (usually better color detection)
+    try:
+        doc = fitz.open(pdf_path)
+        for page_num in range(len(doc)):
+            page = doc[page_num]
+            blocks = page.get_text("dict")["blocks"]
+            for block in blocks:
+                if block.get("type") == 0:  # text block
+                    for line in block.get("lines", []):
+                        for span in line.get("spans", []):
+                            text = span.get("text", "").strip()
+                            if text:
+                                color = span.get("color")
+                                fg_color = None
+                                if debug:
+                                    print(f"Raw color value: {color} (type: {type(color)})")
+                                
+                                if isinstance(color, (tuple, list)) and len(color) >= 3:
+                                    r, g, b = color[:3]
+                                    r, g, b = r/255, g/255, b/255
+                                    fg_color = get_color_name((r, g, b))
+                                    if debug:
+                                        print(f"RGB from tuple: {r}, {g}, {b}")
+                                        print(f"Color name: {fg_color}")
+                                elif isinstance(color, int):
+                                    # Convert integer color to RGB
+                                    r = ((color >> 16) & 0xFF) / 255.0
+                                    g = ((color >> 8) & 0xFF) / 255.0
+                                    b = (color & 0xFF) / 255.0
+                                    fg_color = get_color_name((r, g, b))
+                                    if debug:
+                                        print(f"RGB from int: {r}, {g}, {b}")
+                                        print(f"Color name: {fg_color}")
+                                        
+                                # Handle special cases
+                                if fg_color == 'schwarz' and isinstance(color, int) and color == 0:
+                                    # Check if this might be default text color
+                                    if debug:
+                                        print("Detected default text color (black)")
+                                
+                                # Try to get background color
+                                bg_color = None
+                                if "background" in span:
+                                    bg = span["background"]
+                                    if isinstance(bg, (tuple, list)) and len(bg) >= 3:
+                                        r, g, b = bg[:3]
+                                        r, g, b = r/255, g/255, b/255
+                                        bg_color = get_color_name((r, g, b))
+                                
+                                text_colors[text] = (fg_color, bg_color)
+                                if debug:
+                                    print(f"\nAnalyzing text: {text}")
+                                    print(f"Color: {color}")
+                                    print(f"Background: {bg_color if bg_color else 'None'}")
+        doc.close()
+        if text_colors:
+            return text_colors
+    except Exception as e:
+        if debug:
+            print(f"PyMuPDF extraction failed: {e}\nFalling back to PDFMiner...")
+    
+    # Fallback to PDFMiner if PyMuPDF fails or finds no colors
     rsrcmgr = PDFResourceManager()
     laparams = LAParams(
-        all_texts=True,  # Get all text, including those in figures
-        detect_vertical=True,  # Better handle vertical text
-        word_margin=0.1,  # Adjust word grouping
-        char_margin=2.0,  # Adjust character grouping
-        line_margin=0.5,  # Adjust line grouping
-        boxes_flow=0.5,  # Adjust text box grouping
+        all_texts=True,
+        detect_vertical=True,
+        word_margin=0.1,
+        char_margin=2.0,
+        line_margin=0.5,
+        boxes_flow=0.5,
     )
     
     device = PDFPageAggregator(rsrcmgr, laparams=laparams)
