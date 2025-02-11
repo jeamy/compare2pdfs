@@ -9,14 +9,45 @@ import re
 from typing import List, Dict, Set, Tuple, Optional
 import atexit
 import fitz  # PyMuPDF
-from pdfminer.high_level import extract_pages
-from pdfminer.layout import LAParams, LTTextBox, LTChar, LTPage
-from pdfminer.pdfinterp import PDFResourceManager
-from pdfminer.pdfpage import PDFPage
-from pdfminer.pdfinterp import PDFPageInterpreter
-from pdfminer.converter import PDFPageAggregator
-from pdfminer.pdfdocument import PDFDocument
-from pdfminer.pdfparser import PDFParser
+from math import sqrt
+
+# Common color names and their RGB values (in percentage)
+COLOR_MAP = {
+    'Schwarz': (0, 0, 0),
+    'Weiß': (100, 100, 100),
+    'Rot': (100, 0, 0),
+    'Grün': (0, 100, 0),
+    'Blau': (0, 0, 100),
+    'Gelb': (100, 100, 0),
+    'Magenta': (100, 0, 100),
+    'Cyan': (0, 100, 100),
+    'Grau': (50, 50, 50),
+    'Dunkelgrau': (25, 25, 25),
+    'Hellgrau': (75, 75, 75),
+    'Orange': (100, 65, 0),
+    'Braun': (65, 32, 0),
+    'Violett': (50, 0, 50),
+    'Rosa': (100, 75, 75),
+}
+
+def int_to_rgb_percent(color_int):
+    """Convert an integer color value to RGB percentages."""
+    if isinstance(color_int, (tuple, list)):
+        return [round(c * 100, 1) for c in color_int[:3]]
+    
+    # Convert integer to RGB values
+    b = (color_int & 255) / 255.0 * 100
+    g = ((color_int >> 8) & 255) / 255.0 * 100
+    r = ((color_int >> 16) & 255) / 255.0 * 100
+    return [r, g, b]
+
+def rgb_to_color_name(rgb_percent):
+    """Convert RGB percentages to the closest color name."""
+    def color_distance(c1, c2):
+        return sqrt(sum((a - b) ** 2 for a, b in zip(c1, c2)))
+    
+    closest_color = min(COLOR_MAP.items(), key=lambda x: color_distance(rgb_percent, x[1]))
+    return closest_color[0]
 
 def check_dependencies():
     """Check if required command line tools are available."""
@@ -35,318 +66,79 @@ def cleanup_temp_files(temp_files: List[str]):
             except OSError:
                 pass
 
-def rgb2hex(rgb: Tuple[float, float, float]) -> str:
-    """Convert RGB values (0-1) to hex color code."""
-    r, g, b = rgb
-    return '#{:02x}{:02x}{:02x}'.format(
-        int(r * 255),
-        int(g * 255),
-        int(b * 255)
-    )
-
-def get_color_name(rgb: Tuple[float, float, float]) -> str:
-    """Convert RGB values to color names with improved detection."""
-    r, g, b = rgb
-    r255 = int(r * 255)
-    g255 = int(g * 255)
-    b255 = int(b * 255)
-    
-    # Calculate color intensity and saturation
-    max_val = max(r255, g255, b255)
-    min_val = min(r255, g255, b255)
-    intensity = max_val / 255.0
-    saturation = 0 if max_val == 0 else (max_val - min_val) / max_val
-
-    # Define color thresholds
-    def is_close(a: int, b: int, threshold: int = 30) -> bool:
-        return abs(a - b) <= threshold
-
-    # Check for grayscale first
-    if saturation < 0.15:
-        if intensity < 0.12:
-            return 'schwarz'
-        elif intensity > 0.88:
-            return 'weiß'
-        elif intensity < 0.4:
-            return 'dunkelgrau'
-        elif intensity > 0.6:
-            return 'hellgrau'
-        else:
-            return 'grau'
-
-    # Pure colors with high saturation
-    if saturation > 0.7:
-        if r255 > 200 and g255 < 100 and b255 < 100:
-            return 'rot'
-        elif r255 < 100 and g255 > 200 and b255 < 100:
-            return 'grün'
-        elif r255 < 100 and g255 < 100 and b255 > 200:
-            return 'blau'
-        elif r255 > 200 and g255 > 200 and b255 < 100:
-            return 'gelb'
-        elif r255 > 200 and g255 < 100 and b255 > 200:
-            return 'magenta'
-        elif r255 < 100 and g255 > 200 and b255 > 200:
-            return 'cyan'
-
-    # Mixed colors and variations
-    if r255 > g255 and r255 > b255:
-        if g255 > (r255 * 0.6):
-            return 'orange' if g255 > (r255 * 0.4) else 'dunkelorange'
-        return 'dunkelrot' if intensity < 0.6 else 'hellrot'
-    elif g255 > r255 and g255 > b255:
-        if r255 > (g255 * 0.6):
-            return 'gelbgrün'
-        return 'dunkelgrün' if intensity < 0.6 else 'hellgrün'
-    elif b255 > r255 and b255 > g255:
-        if r255 > (b255 * 0.6):
-            return 'violett'
-        return 'dunkelblau' if intensity < 0.6 else 'hellblau'
-
-    # Fallback to RGB hex
-    hex_color = rgb2hex((r, g, b))
-    return f'RGB({hex_color})'
-
-def get_color_from_colorspace(color_space) -> Optional[Tuple[float, float, float]]:
-    """Extract RGB values from a PDFColorSpace object."""
-    if color_space is None:
-        return None
-
-    # Try direct RGB values first
-    if hasattr(color_space, 'rgb'):
-        return color_space.rgb
-    elif hasattr(color_space, 'rgbvalue'):
-        return color_space.rgbvalue
-
-    # Try color attribute
-    if hasattr(color_space, 'color'):
-        color = color_space.color
-        if isinstance(color, (tuple, list)):
-            if len(color) == 3:  # RGB color
-                return tuple(color)
-            elif len(color) == 1:  # Grayscale
-                gray = color[0]
-                return (gray, gray, gray)
-            elif len(color) == 4:  # CMYK
-                c, m, y, k = color
-                r = 1 - min(1, c * (1 - k) + k)
-                g = 1 - min(1, m * (1 - k) + k)
-                b = 1 - min(1, y * (1 - k) + k)
-                return (r, g, b)
-
-    # Handle different color spaces
-    color_space_str = str(color_space)
-    
-    if 'DeviceGray' in color_space_str:
-        gray = None
-        if hasattr(color_space, 'gray'):
-            gray = color_space.gray
-        elif hasattr(color_space, 'value'):
-            gray = color_space.value
-        elif hasattr(color_space, 'color') and color_space.color:
-            gray = color_space.color[0] if isinstance(color_space.color, (tuple, list)) else color_space.color
-        
-        if gray is not None:
-            return (float(gray), float(gray), float(gray))
-    
-    elif 'DeviceCMYK' in color_space_str:
-        cmyk = None
-        if hasattr(color_space, 'cmyk'):
-            cmyk = color_space.cmyk
-        elif hasattr(color_space, 'value') and len(color_space.value) == 4:
-            cmyk = color_space.value
-            
-        if cmyk:
-            c, m, y, k = cmyk
-            r = 1 - min(1, c * (1 - k) + k)
-            g = 1 - min(1, m * (1 - k) + k)
-            b = 1 - min(1, y * (1 - k) + k)
-            return (r, g, b)
-    
-    # Try _color as last resort
-    if hasattr(color_space, '_color'):
-        color = color_space._color
-        if isinstance(color, (tuple, list)):
-            if len(color) == 3:  # RGB
-                return tuple(color)
-            elif len(color) == 1:  # Grayscale
-                gray = color[0]
-                return (gray, gray, gray)
-            elif len(color) == 4:  # CMYK
-                c, m, y, k = color
-                r = 1 - min(1, c * (1 - k) + k)
-                g = 1 - min(1, m * (1 - k) + k)
-                b = 1 - min(1, y * (1 - k) + k)
-                return (r, g, b)
-    
-    return None
-
-def extract_text_with_colors(pdf_path: str) -> Dict[str, Tuple[Optional[str], Optional[str]]]:
-    """Extract text and its colors from PDF using both PDFMiner and PyMuPDF."""
-    text_colors = {}
-    debug = os.environ.get('DEBUG') == '1'
-    
-    if debug:
-        print(f"\nExtracting colors from {pdf_path}...")
-    
-    # First try with PyMuPDF (usually better color detection)
+def get_text_colors(pdf_path: str, text: str) -> Tuple[Optional[str], Optional[str]]:
+    """Get foreground and background colors for text in PDF."""
     try:
         doc = fitz.open(pdf_path)
-        for page_num in range(len(doc)):
-            page = doc[page_num]
-            blocks = page.get_text("dict")["blocks"]
-            for block in blocks:
-                if block.get("type") == 0:  # text block
-                    for line in block.get("lines", []):
-                        for span in line.get("spans", []):
-                            text = span.get("text", "").strip()
-                            if text:
-                                color = span.get("color")
-                                fg_color = None
-                                if debug:
-                                    print(f"Raw color value: {color} (type: {type(color)})")
-                                
-                                if isinstance(color, (tuple, list)) and len(color) >= 3:
-                                    r, g, b = color[:3]
-                                    r, g, b = r/255, g/255, b/255
-                                    fg_color = get_color_name((r, g, b))
-                                    if debug:
-                                        print(f"RGB from tuple: {r}, {g}, {b}")
-                                        print(f"Color name: {fg_color}")
-                                elif isinstance(color, int):
-                                    # Convert integer color to RGB
-                                    r = ((color >> 16) & 0xFF) / 255.0
-                                    g = ((color >> 8) & 0xFF) / 255.0
-                                    b = (color & 0xFF) / 255.0
-                                    fg_color = get_color_name((r, g, b))
-                                    if debug:
-                                        print(f"RGB from int: {r}, {g}, {b}")
-                                        print(f"Color name: {fg_color}")
-                                        
-                                # Handle special cases
-                                if fg_color == 'schwarz' and isinstance(color, int) and color == 0:
-                                    # Check if this might be default text color
-                                    if debug:
-                                        print("Detected default text color (black)")
-                                
-                                # Try to get background color
-                                bg_color = None
-                                if "background" in span:
-                                    bg = span["background"]
-                                    if isinstance(bg, (tuple, list)) and len(bg) >= 3:
-                                        r, g, b = bg[:3]
-                                        r, g, b = r/255, g/255, b/255
-                                        bg_color = get_color_name((r, g, b))
-                                
-                                text_colors[text] = (fg_color, bg_color)
-                                if debug:
-                                    print(f"\nAnalyzing text: {text}")
-                                    print(f"Color: {color}")
-                                    print(f"Background: {bg_color if bg_color else 'None'}")
+        text_color = bg_color = None
+        
+        # Split search text into smaller chunks for better matching
+        words = text.split()
+        search_chunks = [' '.join(words[i:i+3]) for i in range(0, len(words), 3)]
+        
+        # Search in all pages since we don't know which page the text is on
+        for page in doc:
+            # First get all the drawings that might be backgrounds
+            drawings = page.get_drawings()
+            colored_rects = []
+            
+            # Look for any colored rectangles
+            for drawing in drawings:
+                if 'items' in drawing and drawing.get('fill') and drawing.get('fill') != (1,1,1):  # Any non-white fill
+                    for item in drawing['items']:
+                        if item[0] == 're':  # Rectangle
+                            rect = fitz.Rect(item[1])
+                            colored_rects.append((rect, drawing['fill']))
+            
+            # Now search for text and check its properties
+            for chunk in search_chunks:
+                # Get text instances with their properties
+                text_instances = page.search_for(chunk)
+                if not text_instances:
+                    continue
+                    
+                blocks = page.get_text("dict")["blocks"]
+                
+                # For each instance of the text
+                for rect in text_instances:
+                    # Find text color by matching location with blocks
+                    for block in blocks:
+                        for line in block.get("lines", []):
+                            for span in line.get("spans", []):
+                                span_rect = fitz.Rect(span["bbox"])
+                                if rect.intersects(span_rect):
+                                    if chunk.lower() in span["text"].lower():
+                                        if "color" in span:
+                                            color_val = span["color"]
+                                            rgb_percent = int_to_rgb_percent(color_val)
+                                            color_name = rgb_to_color_name(rgb_percent)
+                                            if color_name != 'Schwarz':
+                                                text_color = color_name
+                    
+                    # Find background color
+                    for bg_rect, color in colored_rects:
+                        if rect.intersects(bg_rect):
+                            rgb_percent = int_to_rgb_percent(color)
+                            color_name = rgb_to_color_name(rgb_percent)
+                            if color_name != 'Schwarz':
+                                bg_color = color_name
+
+                            break
+                    
+                    if text_color or bg_color:  # If we found any colors, stop searching
+                        break
+                
+                if text_color or bg_color:  # If we found any colors, stop searching chunks
+                    break
+            
+            if text_color or bg_color:  # If we found any colors, stop searching pages
+                break
+                
         doc.close()
-        if text_colors:
-            return text_colors
+        return text_color, bg_color
     except Exception as e:
-        if debug:
-            print(f"PyMuPDF extraction failed: {e}\nFalling back to PDFMiner...")
-    
-    # Fallback to PDFMiner if PyMuPDF fails or finds no colors
-    rsrcmgr = PDFResourceManager()
-    laparams = LAParams(
-        all_texts=True,
-        detect_vertical=True,
-        word_margin=0.1,
-        char_margin=2.0,
-        line_margin=0.5,
-        boxes_flow=0.5,
-    )
-    
-    device = PDFPageAggregator(rsrcmgr, laparams=laparams)
-    interpreter = PDFPageInterpreter(rsrcmgr, device)
-    
-    with open(pdf_path, 'rb') as file:
-        parser = PDFParser(file)
-        doc = PDFDocument(parser)
-        for page in PDFPage.create_pages(doc):
-            interpreter.process_page(page)
-            layout = device.get_result()
-            for element in layout:
-                if isinstance(element, LTTextBox):
-                    for text_line in element:
-                        text = ''
-                        fg_color = None
-                        bg_color = None
-                        
-                        # First try to get colors from the text line itself
-                        if hasattr(text_line, 'graphicstate'):
-                            gs = text_line.graphicstate
-                            if hasattr(gs, 'ncolor'):
-                                rgb = get_color_from_colorspace(gs.ncolor)
-                                if rgb:
-                                    fg_color = get_color_name(rgb)
-                            if hasattr(gs, 'fillcolor'):
-                                rgb = get_color_from_colorspace(gs.fillcolor)
-                                if rgb:
-                                    bg_color = get_color_name(rgb)
-                        
-                        for char in text_line:
-                            if isinstance(char, LTChar):
-                                text += char.get_text()
-                                # Try to get foreground color from various attributes
-                                if debug and text.strip():
-                                    print(f"\nAnalyzing text: {text.strip()}")
-                                    if hasattr(char, 'ncs'):
-                                        print(f"NCS: {char.ncs}")
-                                    if hasattr(char, 'graphicstate'):
-                                        gs = char.graphicstate
-                                        print(f"GraphicState attrs: {[attr for attr in dir(gs) if not attr.startswith('_')]}")
-                            
-                                # Try to get foreground color
-                                if hasattr(char, 'ncs') and char.ncs:
-                                    rgb = get_color_from_colorspace(char.ncs)
-                                    if rgb:
-                                        fg_color = get_color_name(rgb)
-                                
-                                if hasattr(char, 'graphicstate'):
-                                    gs = char.graphicstate
-                                    
-                                    # Try to get foreground color from graphicstate if not already found
-                                    if not fg_color:
-                                        # Try ncolor/scolor first (these seem most reliable)
-                                        if hasattr(gs, 'ncolor') and gs.ncolor:
-                                            rgb = get_color_from_colorspace(gs.ncolor)
-                                            if rgb:
-                                                fg_color = get_color_name(rgb)
-                                        elif hasattr(gs, 'scolor') and gs.scolor:
-                                            rgb = get_color_from_colorspace(gs.scolor)
-                                            if rgb:
-                                                fg_color = get_color_name(rgb)
-                                        # Then try other color attributes
-                                        elif hasattr(gs, 'strokecolor') and gs.strokecolor:
-                                            rgb = get_color_from_colorspace(gs.strokecolor)
-                                            if rgb:
-                                                fg_color = get_color_name(rgb)
-                                        elif hasattr(gs, 'stroking_color') and gs.stroking_color:
-                                            rgb = get_color_from_colorspace(gs.stroking_color)
-                                            if rgb:
-                                                fg_color = get_color_name(rgb)
-                                    
-                                    # Try to get background color
-                                    if hasattr(gs, 'fillcolor') and gs.fillcolor:
-                                        rgb = get_color_from_colorspace(gs.fillcolor)
-                                        if rgb:
-                                            bg_color = get_color_name(rgb)
-                                    elif hasattr(gs, 'color') and gs.color:
-                                        rgb = get_color_from_colorspace(gs.color)
-                                        if rgb:
-                                            bg_color = get_color_name(rgb)
-                                    elif hasattr(gs, 'non_stroking_color') and gs.non_stroking_color:
-                                        rgb = get_color_from_colorspace(gs.non_stroking_color)
-                                        if rgb:
-                                            bg_color = get_color_name(rgb)
-                        if text.strip():
-                            text_colors[text.strip()] = (fg_color, bg_color)
-    return text_colors
+        print(f"Warning: Color detection failed: {e}")
+        return None, None
 
 def extract_text_from_pdf(pdf_path: str, output_path: str):
     """Extract text from PDF with UTF-8 encoding."""
@@ -433,9 +225,6 @@ def get_chunks(text: str, chunk_size: int = 5) -> List[Tuple[str, str]]:
     return chunks
 
 def find_matches(file1: str, file2: str, output_file: str, pdf1: str = None, pdf2: str = None):
-    # Extract color information from PDFs
-    colors1 = extract_text_with_colors(pdf1) if pdf1 else {}
-    colors2 = extract_text_with_colors(pdf2) if pdf2 else {}
     """Find matching phrases with context."""
     def process_file(file_path: str) -> Tuple[List[str], Dict[str, str], Dict[str, int]]:
         with open(file_path, 'r', encoding='utf-8') as f:
@@ -516,20 +305,21 @@ def find_matches(file1: str, file2: str, output_file: str, pdf1: str = None, pdf
             # Print match header
             f.write(f"=== Übereinstimmung {matches_found} ===\n")
             f.write("Gefundener Übereinstimmender Text:\n")
-            # Get color information for the matching text
-            fg_color1, bg_color1 = colors1.get(orig_chunk1.strip(), (None, None))
-            fg_color2, bg_color2 = colors2.get(orig_chunk2.strip(), (None, None))
-            
-            f.write(f">>> {orig_chunk1}\n")
-            if fg_color1 or bg_color1:
-                f.write(f"Farbe in Datei 1: {fg_color1 or 'standard'}, Hintergrund: {bg_color1 or 'standard'}\n")
-            if fg_color2 or bg_color2:
-                f.write(f"Farbe in Datei 2: {fg_color2 or 'standard'}, Hintergrund: {bg_color2 or 'standard'}\n")
-            f.write("\n")
+            f.write(f">>> {orig_chunk1}\n\n")
             
             # Print context from first file
             f.write(f"Kontext aus '{display_name1}':\n")
             f.write("-------------------\n")
+            # Add color information if PDF path is available
+            if pdf1:
+                text_color, bg_color = get_text_colors(pdf1, orig_chunk1)
+                color_info = []
+                if text_color:
+                    color_info.append(f"Textfarbe: {text_color}")
+                if bg_color:
+                    color_info.append(f"Hintergrund: {bg_color}")
+                if color_info:
+                    f.write(f"Farben: {' | '.join(color_info)}\n")
             # Two lines before match
             for k in range(i-2, i):
                 if k >= 0 and k < len(sentences1):
@@ -544,6 +334,16 @@ def find_matches(file1: str, file2: str, output_file: str, pdf1: str = None, pdf
             f.write("\n")
             f.write(f"Kontext aus '{display_name2}':\n")
             f.write("-------------------\n")
+            # Add color information if PDF path is available
+            if pdf2:
+                text_color, bg_color = get_text_colors(pdf2, orig_chunk2)
+                color_info = []
+                if text_color:
+                    color_info.append(f"Textfarbe: {text_color}")
+                if bg_color:
+                    color_info.append(f"Hintergrund: {bg_color}")
+                if color_info:
+                    f.write(f"Farben: {' | '.join(color_info)}\n")
             # Two lines before match
             for k in range(j-2, j):
                 if k >= 0 and k < len(sentences2):

@@ -1,6 +1,7 @@
 # PDF generation and manipulation
 fpdf2>=2.7.5
 pdfminer.six>=20231228
+PyMuPDF>=1.23.7
 
 # Text processing
 locale>=1.0
