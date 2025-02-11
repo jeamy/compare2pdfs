@@ -272,7 +272,8 @@ python compare-pdfs.py <pdf1> <pdf2>
 ### Output
 - Shell script version saves results to `vergleich_output.txt`
 - Python version saves results to `vergleich_output_py.txt`
-- Both versions produce identical output format:
+- Python version includes color information for matched text
+- Output format:
   ```
   === Übereinstimmung N ===
   Gefundener Übereinstimmender Text:
@@ -280,16 +281,25 @@ python compare-pdfs.py <pdf1> <pdf2>
 
   Kontext aus '[filename1]':
   -------------------
+  Farben: [Textfarbe: Rot | Hintergrund: Gelb]  # Only shown if non-black colors are found
   [2 lines before]
   >>> [matching line]
   [2 lines after]
 
   Kontext aus '[filename2]':
   -------------------
+  Farben: [Textfarbe: Blau]  # Only shown if non-black colors are found
   [2 lines before]
   >>> [matching line]
   [2 lines after]
   ```
+
+  Color information (Python version only):
+  - Only available in the Python implementation
+  - Shows text and background colors when they are non-black
+  - Colors are detected at the exact location of matched text
+  - Available colors include: Rot, Grün, Blau, Gelb, Magenta, Cyan, Orange, Braun, Violett, Rosa, and various shades of Grau
+  - Shell script version does not include color information
 
 ### Features
 - Intelligent text extraction from PDFs
