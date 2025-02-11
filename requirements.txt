@@ -1,0 +1,5 @@
+# PDF generation and manipulation
+fpdf2>=2.7.5
+
+# Text processing
+locale>=1.0
