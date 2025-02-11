@@ -315,9 +315,9 @@ def find_matches(file1: str, file2: str, output_file: str, pdf1: str = None, pdf
             if pdf1:
                 text_color, bg_color = get_text_colors(pdf1, orig_chunk1)
                 color_info = []
-                if text_color:
+                if text_color and text_color != 'Schwarz':
                     color_info.append(f"Textfarbe: {text_color}")
-                if bg_color:
+                if bg_color and bg_color != 'Schwarz':
                     color_info.append(f"Hintergrund: {bg_color}")
                 if color_info:
                     f.write(f"Farben: {' | '.join(color_info)}\n")
@@ -339,9 +339,9 @@ def find_matches(file1: str, file2: str, output_file: str, pdf1: str = None, pdf
             if pdf2:
                 text_color, bg_color = get_text_colors(pdf2, orig_chunk2)
                 color_info = []
-                if text_color:
+                if text_color and text_color != 'Schwarz':
                     color_info.append(f"Textfarbe: {text_color}")
-                if bg_color:
+                if bg_color and bg_color != 'Schwarz':
                     color_info.append(f"Hintergrund: {bg_color}")
                 if color_info:
                     f.write(f"Farben: {' | '.join(color_info)}\n")
